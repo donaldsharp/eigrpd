@@ -53,8 +53,8 @@
 #include "routemap.h"
 //#include "if_rmap.h"
 
-#include "eigrpd/eigrpd.h"
 #include "eigrpd/eigrp_structs.h"
+#include "eigrpd/eigrpd.h"
 #include "eigrpd/eigrp_dump.h"
 #include "eigrpd/eigrp_interface.h"
 #include "eigrpd/eigrp_neighbor.h"
@@ -66,6 +66,8 @@
 #include "eigrpd/eigrp_filter.h"
 #include "eigrpd/eigrp_errors.h"
 #include "eigrpd/eigrp_vrf.h"
+#include "eigrpd/eigrp_cli.h"
+#include "eigrpd/eigrp_yang.h"
 //#include "eigrpd/eigrp_routemap.h"
 
 /* eigprd privileges */
@@ -139,8 +141,10 @@ struct quagga_signal_t eigrp_signals[] = {
 
 static const struct frr_yang_module_info *const eigrpd_yang_modules[] = {
 	&frr_eigrpd_info,
+	&frr_filter_info,
 	&frr_interface_info,
 	&frr_route_map_info,
+	&frr_vrf_info,
 };
 
 FRR_DAEMON_INFO(eigrpd, EIGRP, .vty_port = EIGRP_VTY_PORT,

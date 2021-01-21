@@ -69,7 +69,7 @@ extern struct in_addr router_id_zebra;
 
 
 /*
- * void eigrp_router_id_update(eigrp_t *eigrp)
+ * void eigrp_router_id_update(struct eigrp *eigrp)
  *
  * Description:
  * update routerid associated with this instance of EIGRP.
@@ -91,7 +91,7 @@ extern struct in_addr router_id_zebra;
  * This does not work for IPv6, and to make the code simpler, its
  * stored and processed internerall as a 32bit number
  */
-void eigrp_router_id_update(eigrp_t *eigrp)
+void eigrp_router_id_update(struct eigrp *eigrp)
 {
 	struct vrf *vrf = vrf_lookup_by_id(eigrp->vrf_id);
 	struct interface *ifp;
@@ -110,10 +110,6 @@ void eigrp_router_id_update(eigrp_t *eigrp)
 
 	eigrp->router_id = router_id;
 	if (router_id_old.s_addr != router_id.s_addr) {
-		//      if (IS_DEBUG_EIGRP_EVENT)
-		//        zlog_debug("Router-ID[NEW:%s]: Update",
-		//        inet_ntoa(eigrp->router_id));
-
 		/* update eigrp_interface's */
 		FOR_ALL_INTERFACES (vrf, ifp)
 			eigrp_if_update(ifp);
@@ -134,9 +130,9 @@ void eigrp_master_init(void)
 }
 
 /* Allocate new eigrp structure. */
-static eigrp_t *eigrp_new(uint16_t as, vrf_id_t vrf_id)
+static struct eigrp *eigrp_new(uint16_t as, vrf_id_t vrf_id)
 {
-	eigrp_t *eigrp = XCALLOC(MTYPE_EIGRP_TOP, sizeof(struct eigrp));
+	struct eigrp *eigrp = XCALLOC(MTYPE_EIGRP_TOP, sizeof(struct eigrp));
 
 	/* init information relevant to peers */
 	eigrp->vrf_id = vrf_id;
@@ -215,9 +211,9 @@ static eigrp_t *eigrp_new(uint16_t as, vrf_id_t vrf_id)
 	return eigrp;
 }
 
-eigrp_t *eigrp_get(uint16_t as, vrf_id_t vrf_id)
+struct eigrp *eigrp_get(uint16_t as, vrf_id_t vrf_id)
 {
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	eigrp = eigrp_lookup(vrf_id);
 	if (eigrp == NULL) {
@@ -231,7 +227,7 @@ eigrp_t *eigrp_get(uint16_t as, vrf_id_t vrf_id)
 /* Shut down the entire process */
 void eigrp_terminate(void)
 {
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 	struct listnode *node, *nnode;
 
 	/* shutdown already in progress */
@@ -246,7 +242,7 @@ void eigrp_terminate(void)
 	frr_fini();
 }
 
-void eigrp_finish(eigrp_t *eigrp)
+void eigrp_finish(struct eigrp *eigrp)
 {
 	eigrp_finish_final(eigrp);
 
@@ -264,10 +260,10 @@ void eigrp_finish(eigrp_t *eigrp)
 }
 
 /* Final cleanup of eigrp instance */
-void eigrp_finish_final(eigrp_t *eigrp)
+void eigrp_finish_final(struct eigrp *eigrp)
 {
-	eigrp_interface_t *ei;
-	eigrp_neighbor_t *nbr;
+	struct eigrp_interface *ei;
+	struct eigrp_neighbor *nbr;
 	struct listnode *node, *nnode, *node2, *nnode2;
 
 	for (ALL_LIST_ELEMENTS(eigrp->eiflist, node, nnode, ei)) {
@@ -298,9 +294,9 @@ void eigrp_finish_final(eigrp_t *eigrp)
 }
 
 /*Look for existing eigrp process*/
-eigrp_t *eigrp_lookup(vrf_id_t vrf_id)
+struct eigrp *eigrp_lookup(vrf_id_t vrf_id)
 {
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 	struct listnode *node, *nnode;
 
 	for (ALL_LIST_ELEMENTS(eigrp_om->eigrp, node, nnode, eigrp))

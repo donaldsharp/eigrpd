@@ -77,6 +77,7 @@
 #include "linklist.h"
 #include "vty.h"
 
+#include "eigrpd/eigrp_types.h"
 #include "eigrpd/eigrp_structs.h"
 #include "eigrpd/eigrpd.h"
 #include "eigrpd/eigrp_interface.h"
@@ -84,23 +85,23 @@
 #include "eigrpd/eigrp_packet.h"
 #include "eigrpd/eigrp_zebra.h"
 #include "eigrpd/eigrp_vty.h"
-#include "eigrpd/eigrp_metric.h"
 #include "eigrpd/eigrp_network.h"
 #include "eigrpd/eigrp_dump.h"
 #include "eigrpd/eigrp_topology.h"
 #include "eigrpd/eigrp_fsm.h"
+#include "eigrpd/eigrp_metric.h"
 
 /*
  * Prototypes
  */
-int eigrp_fsm_event_keep_state(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_nq_fcn(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_q_fcn(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_lr(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_dinc(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_lr_fcs(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_lr_fcn(eigrp_fsm_action_message_t *);
-int eigrp_fsm_event_qact(eigrp_fsm_action_message_t *);
+int eigrp_fsm_event_keep_state(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_nq_fcn(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_q_fcn(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_lr(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_dinc(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_lr_fcs(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_lr_fcn(struct eigrp_fsm_action_message *);
+int eigrp_fsm_event_qact(struct eigrp_fsm_action_message *);
 
 //---------------------------------------------------------------------
 
@@ -112,7 +113,7 @@ int eigrp_fsm_event_qact(eigrp_fsm_action_message_t *);
  * Functions are should be executed within separate thread.
  */
 const struct {
-	int (*func)(eigrp_fsm_action_message_t *);
+	int (*func)(struct eigrp_fsm_action_message *);
 } NSM[EIGRP_FSM_STATE_MAX][EIGRP_FSM_EVENT_MAX] = {
 	{
 		// PASSIVE STATE
@@ -252,28 +253,28 @@ static const char *change2str(enum metric_change change)
 }
 /*
  * Main function in which are make decisions which event occurred.
- * msg - argument of type eigrp_fsm_action_message_t contain
+ * msg - argument of type struct eigrp_fsm_action_message contain
  * details about what happen
  *
  * Return number of occurred event (arrow in diagram).
  *
  */
 static enum eigrp_fsm_events
-eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
+eigrp_get_fsm_event(struct eigrp_fsm_action_message *msg)
 {
 	// Loading base information from message
-	// eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
-	eigrp_route_descriptor_t *route = msg->route;
+	// struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
+	struct eigrp_route_descriptor *entry = msg->entry;
 	uint8_t actual_state = prefix->state;
 	enum metric_change change;
 
-	if (route == NULL) {
-		route = eigrp_route_descriptor_new();
-		route->adv_router = msg->adv_router;
-		route->ei = msg->adv_router->ei;
-		route->prefix = prefix;
-		msg->route = route;
+	if (entry == NULL) {
+		entry = eigrp_route_descriptor_new();
+		entry->adv_router = msg->adv_router;
+		entry->ei = msg->adv_router->ei;
+		entry->prefix = prefix;
+		msg->entry = entry;
 	}
 
 	/*
@@ -287,14 +288,14 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 
 	switch (actual_state) {
 	case EIGRP_FSM_STATE_PASSIVE: {
-		eigrp_route_descriptor_t *head =
+		struct eigrp_route_descriptor *head =
 			listnode_head(prefix->entries);
 
 		if (head->reported_distance < prefix->fdistance) {
 			return EIGRP_FSM_KEEP_STATE;
 		}
 		/*
-		 * if best route doesn't satisfy feasibility condition it means
+		 * if best entry doesn't satisfy feasibility condition it means
 		 * move to active state
 		 * dependently if it was query from successor
 		 */
@@ -308,10 +309,10 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 	}
 	case EIGRP_FSM_STATE_ACTIVE_0: {
 		if (msg->packet_type == EIGRP_OPC_REPLY) {
-			eigrp_route_descriptor_t *head =
+			struct eigrp_route_descriptor *head =
 				listnode_head(prefix->entries);
 
-			listnode_delete(prefix->rij, route->adv_router);
+			listnode_delete(prefix->rij, entry->adv_router);
 			if (prefix->rij->count)
 				return EIGRP_FSM_KEEP_STATE;
 
@@ -322,7 +323,7 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 
 			return EIGRP_FSM_EVENT_LR_FCN;
 		} else if (msg->packet_type == EIGRP_OPC_QUERY
-			   && (route->flags
+			   && (entry->flags
 			       & EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 			return EIGRP_FSM_EVENT_QACT;
 		}
@@ -333,13 +334,13 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 	}
 	case EIGRP_FSM_STATE_ACTIVE_1: {
 		if (msg->packet_type == EIGRP_OPC_QUERY
-		    && (route->flags & EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
+		    && (entry->flags & EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 			return EIGRP_FSM_EVENT_QACT;
 		} else if (msg->packet_type == EIGRP_OPC_REPLY) {
-			listnode_delete(prefix->rij, route->adv_router);
+			listnode_delete(prefix->rij, entry->adv_router);
 
 			if (change == METRIC_INCREASE
-			    && (route->flags
+			    && (entry->flags
 				& EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 				return EIGRP_FSM_EVENT_DINC;
 			} else if (prefix->rij->count) {
@@ -350,7 +351,7 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 			}
 		} else if (msg->packet_type == EIGRP_OPC_UPDATE
 			   && change == METRIC_INCREASE
-			   && (route->flags
+			   && (entry->flags
 			       & EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 			return EIGRP_FSM_EVENT_DINC;
 		}
@@ -360,10 +361,10 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 	}
 	case EIGRP_FSM_STATE_ACTIVE_2: {
 		if (msg->packet_type == EIGRP_OPC_REPLY) {
-			eigrp_route_descriptor_t *head =
+			struct eigrp_route_descriptor *head =
 				listnode_head(prefix->entries);
 
-			listnode_delete(prefix->rij, route->adv_router);
+			listnode_delete(prefix->rij, entry->adv_router);
 			if (prefix->rij->count) {
 				return EIGRP_FSM_KEEP_STATE;
 			} else {
@@ -382,10 +383,10 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 	}
 	case EIGRP_FSM_STATE_ACTIVE_3: {
 		if (msg->packet_type == EIGRP_OPC_REPLY) {
-			listnode_delete(prefix->rij, route->adv_router);
+			listnode_delete(prefix->rij, entry->adv_router);
 
 			if (change == METRIC_INCREASE
-			    && (route->flags
+			    && (entry->flags
 				& EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 				return EIGRP_FSM_EVENT_DINC;
 			} else if (prefix->rij->count) {
@@ -396,7 +397,7 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
 			}
 		} else if (msg->packet_type == EIGRP_OPC_UPDATE
 			   && change == METRIC_INCREASE
-			   && (route->flags
+			   && (entry->flags
 			       & EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG)) {
 			return EIGRP_FSM_EVENT_DINC;
 		}
@@ -413,14 +414,14 @@ eigrp_get_fsm_event(eigrp_fsm_action_message_t *msg)
  * Function made to execute in separate thread.
  * Load argument from thread and execute proper NSM function
  */
-int eigrp_fsm_event(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event(struct eigrp_fsm_action_message *msg)
 {
 	enum eigrp_fsm_events event = eigrp_get_fsm_event(msg);
 
 	zlog_info(
-		"EIGRP AS: %d State: %s Event: %s Network: %s Packet Type: %s Reply RIJ Count: %d change: %s",
+		"EIGRP AS: %d State: %s Event: %s Network: %pI4 Packet Type: %s Reply RIJ Count: %d change: %s",
 		msg->eigrp->AS, prefix_state2str(msg->prefix->state),
-		fsm_state2str(event), eigrp_topology_ip_string(msg->prefix),
+		fsm_state2str(event), &msg->prefix->destination->u.prefix4,
 		packet_type2str(msg->packet_type), msg->prefix->rij->count,
 		change2str(msg->change));
 	(*(NSM[msg->prefix->state][event].func))(msg);
@@ -432,12 +433,12 @@ int eigrp_fsm_event(eigrp_fsm_action_message_t *msg)
  * Function of event 0.
  *
  */
-int eigrp_fsm_event_nq_fcn(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_nq_fcn(struct eigrp_fsm_action_message *msg)
 {
-	eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
 	struct list *successors = eigrp_topology_get_successor(prefix);
-	eigrp_route_descriptor_t *ne;
+	struct eigrp_route_descriptor *ne;
 
 	assert(successors); // If this is NULL we have shit the bed, fun huh?
 
@@ -459,12 +460,12 @@ int eigrp_fsm_event_nq_fcn(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_q_fcn(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_q_fcn(struct eigrp_fsm_action_message *msg)
 {
-	eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
 	struct list *successors = eigrp_topology_get_successor(prefix);
-	eigrp_route_descriptor_t *ne;
+	struct eigrp_route_descriptor *ne;
 
 	assert(successors); // If this is NULL somebody poked us in the eye.
 
@@ -485,11 +486,11 @@ int eigrp_fsm_event_q_fcn(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_keep_state(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_keep_state(struct eigrp_fsm_action_message *msg)
 {
-	eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
-	eigrp_route_descriptor_t *ne = listnode_head(prefix->entries);
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
+	struct eigrp_route_descriptor *ne = listnode_head(prefix->entries);
 
 	if (prefix->state == EIGRP_FSM_STATE_PASSIVE) {
 		if (!eigrp_metrics_is_same(prefix->reported_metric,
@@ -513,11 +514,11 @@ int eigrp_fsm_event_keep_state(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_lr(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_lr(struct eigrp_fsm_action_message *msg)
 {
-	eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
-	eigrp_route_descriptor_t *ne = listnode_head(prefix->entries);
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
+	struct eigrp_route_descriptor *ne = listnode_head(prefix->entries);
 
 	prefix->fdistance = prefix->distance = prefix->rdistance = ne->distance;
 	prefix->reported_metric = ne->total_metric;
@@ -543,10 +544,10 @@ int eigrp_fsm_event_lr(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_dinc(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_dinc(struct eigrp_fsm_action_message *msg)
 {
 	struct list *successors = eigrp_topology_get_successor(msg->prefix);
-	eigrp_route_descriptor_t *ne;
+	struct eigrp_route_descriptor *ne;
 
 	assert(successors); // Trump and his big hands
 
@@ -564,11 +565,11 @@ int eigrp_fsm_event_dinc(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_lr_fcs(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_lr_fcs(struct eigrp_fsm_action_message *msg)
 {
-	eigrp_t *eigrp = msg->eigrp;
-	eigrp_prefix_descriptor_t *prefix = msg->prefix;
-	eigrp_route_descriptor_t *ne = listnode_head(prefix->entries);
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
+	struct eigrp_route_descriptor *ne = listnode_head(prefix->entries);
 
 	prefix->state = EIGRP_FSM_STATE_PASSIVE;
 	prefix->distance = prefix->rdistance = ne->distance;
@@ -596,17 +597,18 @@ int eigrp_fsm_event_lr_fcs(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_lr_fcn(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_lr_fcn(struct eigrp_fsm_action_message *msg)
 {
-    eigrp_t *eigrp = msg->eigrp;
-    eigrp_prefix_descriptor_t *prefix = msg->prefix;
-    eigrp_route_descriptor_t *best_successor;
-    struct list *successors = eigrp_topology_get_successor(prefix);
+	struct eigrp *eigrp = msg->eigrp;
+	struct eigrp_prefix_descriptor *prefix = msg->prefix;
+	struct eigrp_route_descriptor *best_successor;
+	struct list *successors = eigrp_topology_get_successor(prefix);
 
-    assert(successors); // Routing without a stack
+	assert(successors); // Routing without a stack
 
-    prefix->state = (prefix->state == EIGRP_FSM_STATE_ACTIVE_0) ?
-	EIGRP_FSM_STATE_ACTIVE_1 : EIGRP_FSM_STATE_ACTIVE_3;
+	prefix->state = prefix->state == EIGRP_FSM_STATE_ACTIVE_0
+				? EIGRP_FSM_STATE_ACTIVE_1
+				: EIGRP_FSM_STATE_ACTIVE_3;
 
 	best_successor = listnode_head(successors);
 	prefix->rdistance = prefix->distance = best_successor->distance;
@@ -625,10 +627,10 @@ int eigrp_fsm_event_lr_fcn(eigrp_fsm_action_message_t *msg)
 	return 1;
 }
 
-int eigrp_fsm_event_qact(eigrp_fsm_action_message_t *msg)
+int eigrp_fsm_event_qact(struct eigrp_fsm_action_message *msg)
 {
 	struct list *successors = eigrp_topology_get_successor(msg->prefix);
-	eigrp_route_descriptor_t *ne;
+	struct eigrp_route_descriptor *ne;
 
 	assert(successors); // Cats and no Dogs
 

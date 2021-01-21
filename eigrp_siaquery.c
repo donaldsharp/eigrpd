@@ -55,11 +55,11 @@
 #include "eigrpd/eigrp_memory.h"
 
 /*EIGRP SIA-QUERY read function*/
-void eigrp_siaquery_receive(eigrp_t *eigrp, struct ip *iph,
+void eigrp_siaquery_receive(struct eigrp *eigrp, struct ip *iph,
 			    struct eigrp_header *eigrph, struct stream *s,
-			    eigrp_interface_t *ei, int size)
+			    struct eigrp_interface *ei, int size)
 {
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 	struct TLV_IPv4_Internal_type *tlv;
 
 	uint16_t type;
@@ -87,23 +87,23 @@ void eigrp_siaquery_receive(eigrp_t *eigrp, struct ip *iph,
 			dest_addr.family = AFI_IP;
 			dest_addr.u.prefix4 = tlv->destination;
 			dest_addr.prefixlen = tlv->prefix_length;
-			eigrp_prefix_descriptor_t *dest =
+			struct eigrp_prefix_descriptor *dest =
 				eigrp_topology_table_lookup_ipv4(
 					eigrp->topology_table, &dest_addr);
 
 			/* If the destination exists (it should, but one never
 			 * know)*/
 			if (dest != NULL) {
-				eigrp_fsm_action_message_t msg;
-				eigrp_route_descriptor_t *route =
-					eigrp_prefix_descriptor_lookup(dest->entries,
-								  nbr);
+				struct eigrp_fsm_action_message msg;
+				struct eigrp_route_descriptor *entry =
+					eigrp_route_descriptor_lookup(
+						dest->entries, nbr);
 				msg.packet_type = EIGRP_OPC_SIAQUERY;
 				msg.eigrp = eigrp;
 				msg.data_type = EIGRP_INT;
 				msg.adv_router = nbr;
 				msg.metrics = tlv->metric;
-				msg.route = route;
+				msg.entry = entry;
 				msg.prefix = dest;
 				eigrp_fsm_event(&msg);
 			}
@@ -113,10 +113,10 @@ void eigrp_siaquery_receive(eigrp_t *eigrp, struct ip *iph,
 	eigrp_hello_send_ack(nbr);
 }
 
-void eigrp_send_siaquery(eigrp_neighbor_t *nbr,
-			 eigrp_prefix_descriptor_t *pe)
+void eigrp_send_siaquery(struct eigrp_neighbor *nbr,
+			 struct eigrp_prefix_descriptor *pe)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 	uint16_t length = EIGRP_HEADER_LEN;
 
 	ep = eigrp_packet_new(EIGRP_PACKET_MTU(nbr->ei->ifp->mtu), nbr);

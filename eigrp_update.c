@@ -49,6 +49,7 @@
 #include "routemap.h"
 #include "vty.h"
 
+#include "eigrpd/eigrp_types.h"
 #include "eigrpd/eigrp_structs.h"
 #include "eigrpd/eigrpd.h"
 #include "eigrpd/eigrp_interface.h"
@@ -64,7 +65,7 @@
 #include "eigrpd/eigrp_memory.h"
 #include "eigrpd/eigrp_metric.h"
 
-bool eigrp_update_prefix_apply(eigrp_t *eigrp, eigrp_interface_t *ei,
+bool eigrp_update_prefix_apply(struct eigrp *eigrp, struct eigrp_interface *ei,
 			       int in, struct prefix *prefix)
 {
 	struct access_list *alist;
@@ -102,11 +103,12 @@ bool eigrp_update_prefix_apply(eigrp_t *eigrp, eigrp_interface_t *ei,
  * Function is used for removing received prefix
  * from list of neighbor prefixes
  */
-static void remove_received_prefix_gr(struct list *nbr_prefixes,
-				      eigrp_prefix_descriptor_t *recv_prefix)
+static void
+remove_received_prefix_gr(struct list *nbr_prefixes,
+			  struct eigrp_prefix_descriptor *recv_prefix)
 {
 	struct listnode *node1, *node11;
-	eigrp_prefix_descriptor_t *prefix = NULL;
+	struct eigrp_prefix_descriptor *prefix = NULL;
 
 	/* iterate over all prefixes in list */
 	for (ALL_LIST_ELEMENTS(nbr_prefixes, node1, node11, prefix)) {
@@ -132,33 +134,31 @@ static void remove_received_prefix_gr(struct list *nbr_prefixes,
  * weren't advertised by neighbor:
  * We will send message to FSM with prefix delay set to infinity.
  */
-static void eigrp_update_receive_GR_ask(eigrp_t *eigrp,
-					eigrp_neighbor_t *nbr,
+static void eigrp_update_receive_GR_ask(struct eigrp *eigrp,
+					struct eigrp_neighbor *nbr,
 					struct list *nbr_prefixes)
 {
 	struct listnode *node1;
-	eigrp_prefix_descriptor_t *prefix;
-	eigrp_fsm_action_message_t fsm_msg;
+	struct eigrp_prefix_descriptor *prefix;
+	struct eigrp_fsm_action_message fsm_msg;
 
 	/* iterate over all prefixes which weren't advertised by neighbor */
 	for (ALL_LIST_ELEMENTS_RO(nbr_prefixes, node1, prefix)) {
-		char buffer[PREFIX_STRLEN];
-		zlog_debug(
-			"GR receive: Neighbor not advertised %s",
-			prefix2str(prefix->destination, buffer, PREFIX_STRLEN));
+		zlog_debug("GR receive: Neighbor not advertised %pFX",
+			   prefix->destination);
 
 		fsm_msg.metrics = prefix->reported_metric;
 		/* set delay to MAX */
 		fsm_msg.metrics.delay = EIGRP_MAX_METRIC;
 
-		eigrp_route_descriptor_t *route =
-			eigrp_prefix_descriptor_lookup(prefix->entries, nbr);
+		struct eigrp_route_descriptor *entry =
+			eigrp_route_descriptor_lookup(prefix->entries, nbr);
 
 		fsm_msg.packet_type = EIGRP_OPC_UPDATE;
 		fsm_msg.eigrp = eigrp;
 		fsm_msg.data_type = EIGRP_INT;
 		fsm_msg.adv_router = nbr;
-		fsm_msg.route = route;
+		fsm_msg.entry = entry;
 		fsm_msg.prefix = prefix;
 
 		/* send message to FSM */
@@ -169,14 +169,14 @@ static void eigrp_update_receive_GR_ask(eigrp_t *eigrp,
 /*
  * EIGRP UPDATE read function
  */
-void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
+void eigrp_update_receive(struct eigrp *eigrp, struct ip *iph,
 			  struct eigrp_header *eigrph, struct stream *s,
-			  eigrp_interface_t *ei, int size)
+			  struct eigrp_interface *ei, int size)
 {
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 	struct TLV_IPv4_Internal_type *tlv;
-	eigrp_prefix_descriptor_t *pe;
-	eigrp_route_descriptor_t *ne;
+	struct eigrp_prefix_descriptor *pe;
+	struct eigrp_route_descriptor *ne;
 	uint32_t flags;
 	uint16_t type;
 	uint16_t length;
@@ -210,18 +210,18 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 	nbr->recv_sequence_number = ntohl(eigrph->sequence);
 	if (IS_DEBUG_EIGRP_PACKET(0, RECV))
 		zlog_debug(
-			"Processing Update size[%u] int(%s) nbr(%s) seq [%u] flags [%0x]",
+			"Processing Update size[%u] int(%s) nbr(%pI4) seq [%u] flags [%0x]",
 			size,
 			ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id),
-			inet_ntoa(nbr->src), nbr->recv_sequence_number, flags);
+			&nbr->src, nbr->recv_sequence_number, flags);
 
 
 	if ((flags == (EIGRP_INIT_FLAG + EIGRP_RS_FLAG + EIGRP_EOT_FLAG))
 	    && (!same)) {
 		/* Graceful restart Update received with all routes */
 
-		zlog_info("Neighbor %s (%s) is resync: peer graceful-restart",
-			  inet_ntoa(nbr->src),
+		zlog_info("Neighbor %pI4 (%s) is resync: peer graceful-restart",
+			  &nbr->src,
 			  ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id));
 
 		/* get all prefixes from neighbor from topology table */
@@ -232,8 +232,8 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 		/* Graceful restart Update received, routes also in next packet
 		 */
 
-		zlog_info("Neighbor %s (%s) is resync: peer graceful-restart",
-			  inet_ntoa(nbr->src),
+		zlog_info("Neighbor %pI4 (%s) is resync: peer graceful-restart",
+			  &nbr->src,
 			  ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id));
 
 		/* get all prefixes from neighbor from topology table */
@@ -280,15 +280,16 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 			eigrp_nbr_state_set(nbr, EIGRP_NEIGHBOR_DOWN);
 			eigrp_topology_neighbor_down(nbr->ei->eigrp, nbr);
 			nbr->recv_sequence_number = ntohl(eigrph->sequence);
-			zlog_info("Neighbor %s (%s) is down: peer restarted",
-				  inet_ntoa(nbr->src),
+			zlog_info("Neighbor %pI4 (%s) is down: peer restarted",
+				  &nbr->src,
 				  ifindex2ifname(nbr->ei->ifp->ifindex,
 						 eigrp->vrf_id));
 			eigrp_nbr_state_set(nbr, EIGRP_NEIGHBOR_PENDING);
-			zlog_info("Neighbor %s (%s) is pending: new adjacency",
-				  inet_ntoa(nbr->src),
-				  ifindex2ifname(nbr->ei->ifp->ifindex,
-						 eigrp->vrf_id));
+			zlog_info(
+				"Neighbor %pI4 (%s) is pending: new adjacency",
+				&nbr->src,
+				ifindex2ifname(nbr->ei->ifp->ifindex,
+					       eigrp->vrf_id));
 			eigrp_update_send_init(nbr);
 		}
 	}
@@ -306,7 +307,7 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 			dest_addr.family = AF_INET;
 			dest_addr.u.prefix4 = tlv->destination;
 			dest_addr.prefixlen = tlv->prefix_length;
-			eigrp_prefix_descriptor_t *dest =
+			struct eigrp_prefix_descriptor *dest =
 				eigrp_topology_table_lookup_ipv4(
 					eigrp->topology_table, &dest_addr);
 
@@ -318,17 +319,17 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 					remove_received_prefix_gr(nbr_prefixes,
 								  dest);
 
-				eigrp_fsm_action_message_t msg;
-				eigrp_route_descriptor_t *route =
-					eigrp_prefix_descriptor_lookup(dest->entries,
-								  nbr);
+				struct eigrp_fsm_action_message msg;
+				struct eigrp_route_descriptor *entry =
+					eigrp_route_descriptor_lookup(
+						dest->entries, nbr);
 
 				msg.packet_type = EIGRP_OPC_UPDATE;
 				msg.eigrp = eigrp;
 				msg.data_type = EIGRP_INT;
 				msg.adv_router = nbr;
 				msg.metrics = tlv->metric;
-				msg.route = route;
+				msg.entry = entry;
 				msg.prefix = dest;
 				eigrp_fsm_event(&msg);
 			} else {
@@ -363,10 +364,11 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 				pe->fdistance = pe->distance = pe->rdistance =
 					ne->distance;
 				ne->prefix = pe;
-				ne->flags = EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG;
+				ne->flags =
+					EIGRP_ROUTE_DESCRIPTOR_SUCCESSOR_FLAG;
 
-				eigrp_prefix_descriptor_add(eigrp->topology_table,
-						       pe);
+				eigrp_prefix_descriptor_add(
+					eigrp->topology_table, pe);
 				eigrp_route_descriptor_add(eigrp, pe, ne);
 				pe->distance = pe->fdistance = pe->rdistance =
 					ne->distance;
@@ -416,9 +418,9 @@ void eigrp_update_receive(eigrp_t *eigrp, struct ip *iph,
 }
 
 /*send EIGRP Update packet*/
-void eigrp_update_send_init(eigrp_neighbor_t *nbr)
+void eigrp_update_send_init(struct eigrp_neighbor *nbr)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 	uint16_t length = EIGRP_HEADER_LEN;
 
 	ep = eigrp_packet_new(EIGRP_PACKET_MTU(nbr->ei->ifp->mtu), nbr);
@@ -451,8 +453,9 @@ void eigrp_update_send_init(eigrp_neighbor_t *nbr)
 	nbr->init_sequence_number = nbr->ei->eigrp->sequence_number;
 	ep->sequence_number = nbr->ei->eigrp->sequence_number;
 	if (IS_DEBUG_EIGRP_PACKET(0, RECV))
-		zlog_debug("Enqueuing Update Init Len [%u] Seq [%u] Dest [%s]",
-			   ep->length, ep->sequence_number, inet_ntoa(ep->dst));
+		zlog_debug(
+			"Enqueuing Update Init Len [%u] Seq [%u] Dest [%pI4]",
+			ep->length, ep->sequence_number, &ep->dst);
 
 	/*Put packet to retransmission queue*/
 	eigrp_fifo_push(nbr->retrans_queue, ep);
@@ -462,8 +465,8 @@ void eigrp_update_send_init(eigrp_neighbor_t *nbr)
 	}
 }
 
-static void eigrp_update_place_on_nbr_queue(eigrp_neighbor_t *nbr,
-					    eigrp_packet_t *ep,
+static void eigrp_update_place_on_nbr_queue(struct eigrp_neighbor *nbr,
+					    struct eigrp_packet *ep,
 					    uint32_t seq_no, int length)
 {
 	if ((nbr->ei->params.auth_type == EIGRP_AUTH_TYPE_MD5)
@@ -481,8 +484,9 @@ static void eigrp_update_place_on_nbr_queue(eigrp_neighbor_t *nbr,
 	ep->sequence_number = seq_no;
 
 	if (IS_DEBUG_EIGRP_PACKET(0, RECV))
-		zlog_debug("Enqueuing Update Init Len [%u] Seq [%u] Dest [%s]",
-			   ep->length, ep->sequence_number, inet_ntoa(ep->dst));
+		zlog_debug(
+			"Enqueuing Update Init Len [%u] Seq [%u] Dest [%pI4]",
+			ep->length, ep->sequence_number, &ep->dst);
 
 	/*Put packet to retransmission queue*/
 	eigrp_fifo_push(nbr->retrans_queue, ep);
@@ -491,15 +495,15 @@ static void eigrp_update_place_on_nbr_queue(eigrp_neighbor_t *nbr,
 		eigrp_send_packet_reliably(nbr);
 }
 
-static void eigrp_update_send_to_all_nbrs(eigrp_interface_t *ei,
-					  eigrp_packet_t *ep)
+static void eigrp_update_send_to_all_nbrs(struct eigrp_interface *ei,
+					  struct eigrp_packet *ep)
 {
 	struct listnode *node, *nnode;
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 	bool packet_sent = false;
 
 	for (ALL_LIST_ELEMENTS(ei->nbrs, node, nnode, nbr)) {
-		eigrp_packet_t *ep_dup;
+		struct eigrp_packet *ep_dup;
 
 		if (nbr->state != EIGRP_NEIGHBOR_UP)
 			continue;
@@ -523,15 +527,15 @@ static void eigrp_update_send_to_all_nbrs(eigrp_interface_t *ei,
 		eigrp_packet_free(ep);
 }
 
-void eigrp_update_send_EOT(eigrp_neighbor_t *nbr)
+void eigrp_update_send_EOT(struct eigrp_neighbor *nbr)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 	uint16_t length = EIGRP_HEADER_LEN;
-	eigrp_route_descriptor_t *te;
-	eigrp_prefix_descriptor_t *pe;
+	struct eigrp_route_descriptor *te;
+	struct eigrp_prefix_descriptor *pe;
 	struct listnode *node2, *nnode2;
-	eigrp_interface_t *ei = nbr->ei;
-	eigrp_t *eigrp = ei->eigrp;
+	struct eigrp_interface *ei = nbr->ei;
+	struct eigrp *eigrp = ei->eigrp;
 	struct prefix *dest_addr;
 	uint32_t seq_no = eigrp->sequence_number;
 	uint16_t eigrp_mtu = EIGRP_PACKET_MTU(ei->ifp->mtu);
@@ -596,13 +600,13 @@ void eigrp_update_send_EOT(eigrp_neighbor_t *nbr)
 	eigrp->sequence_number = seq_no++;
 }
 
-void eigrp_update_send(eigrp_interface_t *ei)
+void eigrp_update_send(struct eigrp_interface *ei)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 	struct listnode *node, *nnode;
-	eigrp_prefix_descriptor_t *pe;
+	struct eigrp_prefix_descriptor *pe;
 	uint8_t has_tlv;
-	eigrp_t *eigrp = ei->eigrp;
+	struct eigrp *eigrp = ei->eigrp;
 	struct prefix *dest_addr;
 	uint32_t seq_no = eigrp->sequence_number;
 	uint16_t eigrp_mtu = EIGRP_PACKET_MTU(ei->ifp->mtu);
@@ -626,7 +630,7 @@ void eigrp_update_send(eigrp_interface_t *ei)
 	has_tlv = 0;
 	for (ALL_LIST_ELEMENTS(ei->eigrp->topology_changes_internalIPV4, node,
 			       nnode, pe)) {
-		eigrp_route_descriptor_t *ne;
+		struct eigrp_route_descriptor *ne;
 
 		if (!(pe->req_action & EIGRP_FSM_NEED_UPDATE))
 			continue;
@@ -702,12 +706,12 @@ void eigrp_update_send(eigrp_interface_t *ei)
 	ei->eigrp->sequence_number = seq_no++;
 }
 
-void eigrp_update_send_all(eigrp_t *eigrp,
-			   eigrp_interface_t *exception)
+void eigrp_update_send_all(struct eigrp *eigrp,
+			   struct eigrp_interface *exception)
 {
-	eigrp_interface_t *iface;
+	struct eigrp_interface *iface;
 	struct listnode *node, *node2, *nnode2;
-	eigrp_prefix_descriptor_t *pe;
+	struct eigrp_prefix_descriptor *pe;
 
 	for (ALL_LIST_ELEMENTS_RO(eigrp->eiflist, node, iface)) {
 		if (iface != exception) {
@@ -741,15 +745,14 @@ void eigrp_update_send_all(eigrp_t *eigrp,
  *
  * Uses nbr_gr_packet_type from neighbor.
  */
-static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
+static void eigrp_update_send_GR_part(struct eigrp_neighbor *nbr)
 {
-	eigrp_interface_t *ei = nbr->ei;
-	eigrp_t *eigrp = ei->eigrp;
-	eigrp_packet_t *ep;
-	eigrp_prefix_descriptor_t *pe;
-
+	struct eigrp_packet *ep;
 	uint16_t length = EIGRP_HEADER_LEN;
+	struct eigrp_prefix_descriptor *pe;
 	struct prefix *dest_addr;
+	struct eigrp_interface *ei = nbr->ei;
+	struct eigrp *eigrp = ei->eigrp;
 	struct list *prefixes;
 	uint32_t flags;
 	unsigned int send_prefixes;
@@ -817,8 +820,8 @@ static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
 		if (eigrp_update_prefix_apply(eigrp, ei, EIGRP_FILTER_OUT,
 					      dest_addr)) {
 			/* do not send filtered route */
-			zlog_info("Filtered prefix %s won't be sent out.",
-				  inet_ntoa(dest_addr->u.prefix4));
+			zlog_info("Filtered prefix %pI4 won't be sent out.",
+				  &dest_addr->u.prefix4);
 		} else {
 			/* sending route which wasn't filtered */
 			length += eigrp_add_internalTLV_to_stream(ep->s, pe);
@@ -832,14 +835,14 @@ static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
 		if (eigrp_update_prefix_apply(eigrp, ei, EIGRP_FILTER_IN,
 					      dest_addr)) {
 			/* do not send filtered route */
-			zlog_info("Filtered prefix %s will be removed.",
-				  inet_ntoa(dest_addr->u.prefix4));
+			zlog_info("Filtered prefix %pI4 will be removed.",
+				  &dest_addr->u.prefix4);
 
 			/* prepare message for FSM */
-			eigrp_fsm_action_message_t fsm_msg;
+			struct eigrp_fsm_action_message fsm_msg;
 
-			eigrp_route_descriptor_t *route =
-			    eigrp_prefix_descriptor_lookup(pe->entries, nbr);
+			struct eigrp_route_descriptor *entry =
+				eigrp_route_descriptor_lookup(pe->entries, nbr);
 
 			fsm_msg.packet_type = EIGRP_OPC_UPDATE;
 			fsm_msg.eigrp = eigrp;
@@ -848,7 +851,7 @@ static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
 			fsm_msg.metrics = pe->reported_metric;
 			/* Set delay to MAX */
 			fsm_msg.metrics.delay = EIGRP_MAX_METRIC;
-			fsm_msg.route = route;
+			fsm_msg.entry = entry;
 			fsm_msg.prefix = pe;
 
 			/* send message to FSM */
@@ -882,8 +885,9 @@ static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
 	ep->sequence_number = eigrp->sequence_number;
 
 	if (IS_DEBUG_EIGRP_PACKET(0, RECV))
-		zlog_debug("Enqueuing Update Init Len [%u] Seq [%u] Dest [%s]",
-			   ep->length, ep->sequence_number, inet_ntoa(ep->dst));
+		zlog_debug(
+			"Enqueuing Update Init Len [%u] Seq [%u] Dest [%pI4]",
+			ep->length, ep->sequence_number, &ep->dst);
 
 	/*Put packet to retransmission queue*/
 	eigrp_fifo_push(nbr->retrans_queue, ep);
@@ -909,7 +913,7 @@ static void eigrp_update_send_GR_part(eigrp_neighbor_t *nbr)
  */
 int eigrp_update_send_GR_thread(struct thread *thread)
 {
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 
 	/* get argument from thread */
 	nbr = THREAD_ARG(thread);
@@ -953,32 +957,32 @@ int eigrp_update_send_GR_thread(struct thread *thread)
  * Creates Update packet with INIT, RS, EOT flags and include
  * all route except those filtered
  */
-void eigrp_update_send_GR(eigrp_neighbor_t *nbr, enum GR_type gr_type,
+void eigrp_update_send_GR(struct eigrp_neighbor *nbr, enum GR_type gr_type,
 			  struct vty *vty)
 {
-	eigrp_prefix_descriptor_t *pe2;
+	struct eigrp_prefix_descriptor *pe2;
 	struct list *prefixes;
 	struct route_node *rn;
-	eigrp_interface_t *ei = nbr->ei;
-	eigrp_t *eigrp = ei->eigrp;
+	struct eigrp_interface *ei = nbr->ei;
+	struct eigrp *eigrp = ei->eigrp;
 
 	if (gr_type == EIGRP_GR_FILTER) {
 		/* function was called after applying filtration */
 		zlog_info(
-			"Neighbor %s (%s) is resync: route configuration changed",
-			inet_ntoa(nbr->src),
+			"Neighbor %pI4 (%s) is resync: route configuration changed",
+			&nbr->src,
 			ifindex2ifname(ei->ifp->ifindex, eigrp->vrf_id));
 	} else if (gr_type == EIGRP_GR_MANUAL) {
 		/* Graceful restart was called manually */
-		zlog_info("Neighbor %s (%s) is resync: manually cleared",
-			  inet_ntoa(nbr->src),
+		zlog_info("Neighbor %pI4 (%s) is resync: manually cleared",
+			  &nbr->src,
 			  ifindex2ifname(ei->ifp->ifindex, eigrp->vrf_id));
 
 		if (vty != NULL) {
 			vty_time_print(vty, 0);
 			vty_out(vty,
-				"Neighbor %s (%s) is resync: manually cleared\n",
-				inet_ntoa(nbr->src),
+				"Neighbor %pI4 (%s) is resync: manually cleared\n",
+				&nbr->src,
 				ifindex2ifname(ei->ifp->ifindex,
 					       eigrp->vrf_id));
 		}
@@ -1019,11 +1023,11 @@ void eigrp_update_send_GR(eigrp_neighbor_t *nbr, enum GR_type gr_type,
  * Function used for sending Graceful restart Update packet
  * to all neighbors on specified interface.
  */
-void eigrp_update_send_interface_GR(eigrp_interface_t *ei,
+void eigrp_update_send_interface_GR(struct eigrp_interface *ei,
 				    enum GR_type gr_type, struct vty *vty)
 {
 	struct listnode *node;
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 
 	/* iterate over all neighbors on eigrp interface */
 	for (ALL_LIST_ELEMENTS_RO(ei->nbrs, node, nbr)) {
@@ -1045,11 +1049,11 @@ void eigrp_update_send_interface_GR(eigrp_interface_t *ei,
  * Function used for sending Graceful restart Update packet
  * to all neighbors in eigrp process.
  */
-void eigrp_update_send_process_GR(eigrp_t *eigrp, enum GR_type gr_type,
+void eigrp_update_send_process_GR(struct eigrp *eigrp, enum GR_type gr_type,
 				  struct vty *vty)
 {
 	struct listnode *node;
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 
 	/* iterate over all eigrp interfaces */
 	for (ALL_LIST_ELEMENTS_RO(eigrp->eiflist, node, ei)) {

@@ -83,7 +83,7 @@ static const struct message eigrp_general_tlv_type_str[] = {
  */
 int eigrp_hello_timer(struct thread *thread)
 {
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 
 	ei = THREAD_ARG(thread);
 	ei->t_hello = NULL;
@@ -118,11 +118,11 @@ int eigrp_hello_timer(struct thread *thread)
  * Note the addition of K6 for the new extended metrics, and does not apply to
  * older TLV packet formats.
  */
-static eigrp_neighbor_t *
-eigrp_hello_parameter_decode(eigrp_neighbor_t *nbr,
+static struct eigrp_neighbor *
+eigrp_hello_parameter_decode(struct eigrp_neighbor *nbr,
 			     struct eigrp_tlv_hdr_type *tlv)
 {
-	eigrp_t *eigrp = nbr->ei->eigrp;
+	struct eigrp *eigrp = nbr->ei->eigrp;
 	struct TLV_Parameter_Type *param = (struct TLV_Parameter_Type *)tlv;
 
 	/* copy over the values passed in by the neighbor */
@@ -144,10 +144,11 @@ eigrp_hello_parameter_decode(eigrp_neighbor_t *nbr,
 	    && (eigrp->k_values[4] == nbr->K5)) {
 
 		if (eigrp_nbr_state_get(nbr) == EIGRP_NEIGHBOR_DOWN) {
-			zlog_info("Neighbor %s (%s) is pending: new adjacency",
-				  inet_ntoa(nbr->src),
-				  ifindex2ifname(nbr->ei->ifp->ifindex,
-						 eigrp->vrf_id));
+			zlog_info(
+				"Neighbor %pI4 (%s) is pending: new adjacency",
+				&nbr->src,
+				ifindex2ifname(nbr->ei->ifp->ifindex,
+					       eigrp->vrf_id));
 
 			/* Expedited hello sent */
 			eigrp_hello_send(nbr->ei, EIGRP_HELLO_NORMAL, NULL);
@@ -164,16 +165,16 @@ eigrp_hello_parameter_decode(eigrp_neighbor_t *nbr,
 			     & param->K5)
 			    == 255) {
 				zlog_info(
-					"Neighbor %s (%s) is down: Interface PEER-TERMINATION received",
-					inet_ntoa(nbr->src),
+					"Neighbor %pI4 (%s) is down: Interface PEER-TERMINATION received",
+					&nbr->src,
 					ifindex2ifname(nbr->ei->ifp->ifindex,
 						       eigrp->vrf_id));
 				eigrp_nbr_delete(nbr);
 				return NULL;
 			} else {
 				zlog_info(
-					"Neighbor %s (%s) going down: Kvalue mismatch",
-					inet_ntoa(nbr->src),
+					"Neighbor %pI4 (%s) going down: Kvalue mismatch",
+					&nbr->src,
 					ifindex2ifname(nbr->ei->ifp->ifindex,
 						       eigrp->vrf_id));
 				eigrp_nbr_state_set(nbr, EIGRP_NEIGHBOR_DOWN);
@@ -187,7 +188,7 @@ eigrp_hello_parameter_decode(eigrp_neighbor_t *nbr,
 static uint8_t
 eigrp_hello_authentication_decode(struct stream *s,
 				  struct eigrp_tlv_hdr_type *tlv_header,
-				  eigrp_neighbor_t *nbr)
+				  struct eigrp_neighbor *nbr)
 {
 	struct TLV_MD5_Authentication_Type *md5;
 
@@ -217,7 +218,7 @@ eigrp_hello_authentication_decode(struct stream *s,
  * This consists of two bytes of OS version, and two bytes of EIGRP
  * revision number.
  */
-static void eigrp_sw_version_decode(eigrp_neighbor_t *nbr,
+static void eigrp_sw_version_decode(struct eigrp_neighbor *nbr,
 				    struct eigrp_tlv_hdr_type *tlv)
 {
 	struct TLV_Software_Type *version = (struct TLV_Software_Type *)tlv;
@@ -242,10 +243,10 @@ static void eigrp_sw_version_decode(eigrp_neighbor_t *nbr,
  * a match is found, move the sending neighbor to the down state. If
  * out address is not in the TLV, then ignore the peer termination
  */
-static void eigrp_peer_termination_decode(eigrp_neighbor_t *nbr,
+static void eigrp_peer_termination_decode(struct eigrp_neighbor *nbr,
 					  struct eigrp_tlv_hdr_type *tlv)
 {
-	eigrp_t *eigrp = nbr->ei->eigrp;
+	struct eigrp *eigrp = nbr->ei->eigrp;
 	struct TLV_Peer_Termination_type *param =
 		(struct TLV_Peer_Termination_type *)tlv;
 
@@ -253,9 +254,10 @@ static void eigrp_peer_termination_decode(eigrp_neighbor_t *nbr,
 	uint32_t received_ip = param->neighbor_ip;
 
 	if (my_ip == received_ip) {
-		zlog_info("Neighbor %s (%s) is down: Peer Termination received",
-			  inet_ntoa(nbr->src),
-			  ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id));
+		zlog_info(
+			"Neighbor %pI4 (%s) is down: Peer Termination received",
+			&nbr->src,
+			ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id));
 		/* set neighbor to DOWN */
 		nbr->state = EIGRP_NEIGHBOR_DOWN;
 		/* delete neighbor */
@@ -314,12 +316,12 @@ static uint16_t eigrp_peer_termination_encode(struct stream *s,
  * @usage
  * Not all TLVs are current decoder.  This is a work in progress..
  */
-void eigrp_hello_receive(eigrp_t *eigrp, struct ip *iph,
+void eigrp_hello_receive(struct eigrp *eigrp, struct ip *iph,
 			 struct eigrp_header *eigrph, struct stream *s,
-			 eigrp_interface_t *ei, int size)
+			 struct eigrp_interface *ei, int size)
 {
 	struct eigrp_tlv_hdr_type *tlv_header;
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 	uint16_t type;
 	uint16_t length;
 
@@ -330,9 +332,9 @@ void eigrp_hello_receive(eigrp_t *eigrp, struct ip *iph,
 	assert(nbr);
 
 	if (IS_DEBUG_EIGRP_PACKET(eigrph->opcode - 1, RECV))
-		zlog_debug("Processing Hello size[%u] int(%s) nbr(%s)", size,
+		zlog_debug("Processing Hello size[%u] int(%s) nbr(%pI4)", size,
 			   ifindex2ifname(nbr->ei->ifp->ifindex, eigrp->vrf_id),
-			   inet_ntoa(nbr->src));
+			   &nbr->src);
 
 	size -= EIGRP_HEADER_LEN;
 	if (size < 0)
@@ -403,8 +405,7 @@ void eigrp_hello_receive(eigrp_t *eigrp, struct ip *iph,
 	}
 
 	if (IS_DEBUG_EIGRP_PACKET(0, RECV))
-		zlog_debug("Hello Packet received from %s",
-			   inet_ntoa(nbr->src));
+		zlog_debug("Hello Packet received from %pI4", &nbr->src);
 }
 
 uint32_t FRR_MAJOR;
@@ -485,12 +486,12 @@ static uint16_t eigrp_tidlist_encode(struct stream *s)
  * Part of conditional receive process
  *
  */
-static uint16_t eigrp_sequence_encode(eigrp_t *eigrp, struct stream *s)
+static uint16_t eigrp_sequence_encode(struct eigrp *eigrp, struct stream *s)
 {
 	uint16_t length = EIGRP_TLV_SEQ_BASE_LEN;
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 	struct listnode *node, *node2, *nnode2;
-	eigrp_neighbor_t *nbr;
+	struct eigrp_neighbor *nbr;
 	size_t backup_end, size_end;
 	int found;
 
@@ -536,7 +537,7 @@ static uint16_t eigrp_sequence_encode(eigrp_t *eigrp, struct stream *s)
  * Part of conditional receive process
  *
  */
-static uint16_t eigrp_next_sequence_encode(eigrp_t *eigrp,
+static uint16_t eigrp_next_sequence_encode(struct eigrp *eigrp,
 					   struct stream *s)
 {
 	uint16_t length = EIGRP_NEXT_SEQUENCE_TLV_SIZE;
@@ -564,7 +565,7 @@ static uint16_t eigrp_next_sequence_encode(eigrp_t *eigrp,
  * Note the addition of K6 for the new extended metrics, and does not apply to
  * older TLV packet formats.
  */
-static uint16_t eigrp_hello_parameter_encode(eigrp_interface_t *ei,
+static uint16_t eigrp_hello_parameter_encode(struct eigrp_interface *ei,
 					     struct stream *s, uint8_t flags)
 {
 	// add in the parameters TLV
@@ -612,12 +613,12 @@ static uint16_t eigrp_hello_parameter_encode(eigrp_interface_t *ei,
  * Allocate an EIGRP hello packet, and add in the the approperate TLVs
  *
  */
-static eigrp_packet_t *eigrp_hello_encode(eigrp_interface_t *ei,
+static struct eigrp_packet *eigrp_hello_encode(struct eigrp_interface *ei,
 					       in_addr_t addr, uint32_t ack,
 					       uint8_t flags,
 					       struct in_addr *nbr_addr)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 	uint16_t length = EIGRP_HEADER_LEN;
 
 	// allocate a new packet to be sent
@@ -697,9 +698,9 @@ static eigrp_packet_t *eigrp_hello_encode(eigrp_interface_t *ei,
  *  updated to the neighbor's sequence number to acknolodge any
  *  outstanding packets
  */
-void eigrp_hello_send_ack(eigrp_neighbor_t *nbr)
+void eigrp_hello_send_ack(struct eigrp_neighbor *nbr)
 {
-	eigrp_packet_t *ep;
+	struct eigrp_packet *ep;
 
 	/* if packet succesfully created, add it to the interface queue */
 	ep = eigrp_hello_encode(nbr->ei, nbr->src.s_addr,
@@ -708,9 +709,8 @@ void eigrp_hello_send_ack(eigrp_neighbor_t *nbr)
 
 	if (ep) {
 		if (IS_DEBUG_EIGRP_PACKET(0, SEND))
-			zlog_debug("Queueing [Hello] Ack Seq [%u] nbr [%s]",
-				   nbr->recv_sequence_number,
-				   inet_ntoa(nbr->src));
+			zlog_debug("Queueing [Hello] Ack Seq [%u] nbr [%pI4]",
+				   nbr->recv_sequence_number, &nbr->src);
 
 		/* Add packet to the top of the interface output queue*/
 		eigrp_fifo_push(nbr->ei->obuf, ep);
@@ -740,16 +740,10 @@ void eigrp_hello_send_ack(eigrp_neighbor_t *nbr)
  * sending.  If no packets are currently queues, the packet will be
  * sent immadiatly
  */
-void eigrp_hello_send(eigrp_interface_t *ei, uint8_t flags,
+void eigrp_hello_send(struct eigrp_interface *ei, uint8_t flags,
 		      struct in_addr *nbr_addr)
 {
-	eigrp_packet_t *ep = NULL;
-
-	/* If this is passive interface, do not send EIGRP Hello.
-	   if ((EIGRP_IF_PASSIVE_STATUS (ei) == EIGRP_IF_PASSIVE) ||
-	   (ei->type != EIGRP_IFTYPE_NBMA))
-	   return;
-	*/
+	struct eigrp_packet *ep = NULL;
 
 	if (IS_DEBUG_EIGRP_PACKET(0, SEND))
 		zlog_debug("Queueing [Hello] Interface(%s)", IF_NAME(ei));

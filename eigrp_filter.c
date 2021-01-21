@@ -65,9 +65,9 @@
 void eigrp_distribute_update(struct distribute_ctx *ctx,
 			     struct distribute *dist)
 {
-	eigrp_t *e = eigrp_lookup(ctx->vrf->vrf_id);
+	struct eigrp *e = eigrp_lookup(ctx->vrf->vrf_id);
 	struct interface *ifp;
-	eigrp_interface_t *ei = NULL;
+	struct eigrp_interface *ei = NULL;
 	struct access_list *alist;
 	struct prefix_list *plist;
 	// struct route_map *routemap;
@@ -159,13 +159,10 @@ void eigrp_distribute_update(struct distribute_ctx *ctx,
 #endif
 		// TODO: check Graceful restart after 10sec
 
-		/* check if there is already GR scheduled */
-		if (e->t_distribute != NULL) {
-			/* if is, cancel schedule */
-			thread_cancel(e->t_distribute);
-		}
+		/* cancel GR scheduled */
+		thread_cancel(&(e->t_distribute));
+
 		/* schedule Graceful restart for whole process in 10sec */
-		e->t_distribute = NULL;
 		thread_add_timer(master, eigrp_distribute_timer_process, e,
 				 (10), &e->t_distribute);
 
@@ -179,7 +176,7 @@ void eigrp_distribute_update(struct distribute_ctx *ctx,
 	/*struct eigrp_if_info * info = ifp->info;
 	ei = info->eigrp_interface;*/
 	struct listnode *node, *nnode;
-	eigrp_interface_t *ei2;
+	struct eigrp_interface *ei2;
 	/* Find proper interface */
 	for (ALL_LIST_ELEMENTS(e->eiflist, node, nnode, ei2)) {
 		if (strcmp(ei2->ifp->name, ifp->name) == 0) {
@@ -267,11 +264,8 @@ void eigrp_distribute_update(struct distribute_ctx *ctx,
 #endif
 	// TODO: check Graceful restart after 10sec
 
-	/* check if there is already GR scheduled */
-	if (ei->t_distribute != NULL) {
-		/* if is, cancel schedule */
-		thread_cancel(ei->t_distribute);
-	}
+	/* Cancel GR scheduled */
+	thread_cancel(&(ei->t_distribute));
 	/* schedule Graceful restart for interface in 10sec */
 	e->t_distribute = NULL;
 	thread_add_timer(master, eigrp_distribute_timer_interface, ei, 10,
@@ -284,7 +278,7 @@ void eigrp_distribute_update(struct distribute_ctx *ctx,
 void eigrp_distribute_update_interface(struct interface *ifp)
 {
 	struct distribute *dist;
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	eigrp = eigrp_lookup(ifp->vrf_id);
 	if (!eigrp)
@@ -330,7 +324,7 @@ void eigrp_distribute_update_all_wrapper(struct access_list *notused)
  */
 int eigrp_distribute_timer_process(struct thread *thread)
 {
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	eigrp = THREAD_ARG(thread);
 	eigrp->t_distribute = NULL;
@@ -354,7 +348,7 @@ int eigrp_distribute_timer_process(struct thread *thread)
  */
 int eigrp_distribute_timer_interface(struct thread *thread)
 {
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 
 	ei = THREAD_ARG(thread);
 	ei->t_distribute = NULL;

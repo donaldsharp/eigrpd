@@ -35,53 +35,30 @@
 #include "filter.h"
 
 #include "eigrpd/eigrp_const.h"
-#include "eigrpd/eigrp_types.h"
 #include "eigrpd/eigrp_macros.h"
 
-typedef struct eigrp_metrics {
-    eigrp_delay_t delay;
-    eigrp_bandwidth_t bandwidth;
-    unsigned char mtu[3];
-    uint8_t hop_count;
-    uint8_t reliability;
-    uint8_t load;
-    uint8_t tag;
-    uint8_t flags;
-} eigrp_metrics_t;
+struct eigrp_metrics {
+	uint32_t delay;
+	uint32_t bandwidth;
+	unsigned char mtu[3];
+	uint8_t hop_count;
+	uint8_t reliability;
+	uint8_t load;
+	uint8_t tag;
+	uint8_t flags;
+};
 
-typedef struct eigrp_extdata {
-    uint32_t orig;
-    uint32_t as;
-    uint32_t tag;
-    uint32_t metric;
-    uint16_t reserved;
-    uint8_t  protocol;
-    uint8_t  flags;
-} eigrp_extdata_t;
+struct eigrp_extdata {
+	uint32_t orig;
+	uint32_t as;
+	uint32_t tag;
+	uint32_t metric;
+	uint16_t reserved;
+	uint8_t protocol;
+	uint8_t flags;
+};
 
-typedef struct eigrp_intf_stats {
-    struct {
-	int	ack;
-	int	hello;   /* Hello message input count. */
-	int	query;   /* Query message input count. */
-	int	reply;   /* Reply message input count. */
-	int	update;  /* Update message input count. */
-	int	siaQuery;
-	int	siaReply;
-    } rcvd;
-
-    struct {
-	int	ack;
-	int	hello;  /* Hello message output count. */
-	int	query;  /* Query message output count. */
-	int	reply;  /* Reply message output count. */
-	int	update; /* Update message output count. */
-	int	siaQuery;
-	int	siaReply;
-    } sent;
-} eigrp_intf_stats_t;
-
-typedef struct eigrp {
+struct eigrp {
 	vrf_id_t vrf_id;
 
 	uint16_t AS;	 /* Autonomous system number */
@@ -125,10 +102,10 @@ typedef struct eigrp {
 	struct list *topology_changes_externalIPV4;
 
 	/*Neighbor self*/
-	eigrp_neighbor_t *neighbor_self;
+	struct eigrp_neighbor *neighbor_self;
 
 	/*Configured metric for redistributed routes*/
-	eigrp_metrics_t dmetric[ZEBRA_ROUTE_MAX + 1];
+	struct eigrp_metrics dmetric[ZEBRA_ROUTE_MAX + 1];
 	int redistribute; /* Num of redistributed protocols. */
 
 	/* Access-list. */
@@ -150,17 +127,10 @@ typedef struct eigrp {
 	struct distribute_ctx *distribute_ctx;
 
 	QOBJ_FIELDS
-} eigrp_t;
+};
 DECLARE_QOBJ_TYPE(eigrp)
 
-typedef struct eigrp_fifo {
-	eigrp_packet_t *head;
-	eigrp_packet_t *tail;
-
-	unsigned long count;
-} eigrp_fifo_t;
-
-typedef struct eigrp_if_params {
+struct eigrp_if_params {
 	uint8_t passive_interface;
 	uint32_t v_hello;
 	uint16_t v_wait;
@@ -172,27 +142,27 @@ typedef struct eigrp_if_params {
 
 	char *auth_keychain; /* Associated keychain with interface*/
 	int auth_type;       /* EIGRP authentication type */
-} eigrp_if_params_t;
+};
 
 enum { MEMBER_ALLROUTERS = 0,
        MEMBER_MAX,
 };
 
 /*EIGRP interface structure*/
-typedef struct eigrp_interface {
-	eigrp_if_params_t params;
+struct eigrp_interface {
+	struct eigrp_if_params params;
 
 	/*multicast group refcnts */
 	bool member_allrouters;
 
 	/* This interface's parent eigrp instance. */
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	/* Interface data from zebra. */
 	struct interface *ifp;
 
 	/* Packet send buffer. */
-	eigrp_fifo_t *obuf; /* Output queue */
+	struct eigrp_fifo *obuf; /* Output queue */
 
 	/* To which multicast groups do we currently belong? */
 
@@ -239,7 +209,7 @@ typedef struct eigrp_interface {
 	struct prefix_list *prefix[EIGRP_FILTER_MAX];
 	/* Route-map. */
 	struct route_map *routemap[EIGRP_FILTER_MAX];
-} eigrp_interface_t;
+};
 
 /* Determines if it is first or last packet
  * when packet consists of multiple packet
@@ -251,11 +221,63 @@ enum Packet_part_type {
 	EIGRP_PACKET_PART_LAST
 };
 
+/* Neighbor Data Structure */
+struct eigrp_neighbor {
+	/* This neighbor's parent eigrp interface. */
+	struct eigrp_interface *ei;
+
+	/* EIGRP neighbor Information */
+	uint8_t state; /* neigbor status. */
+
+	uint32_t recv_sequence_number; /* Last received sequence Number. */
+	uint32_t init_sequence_number;
+
+	/*If packet is unacknowledged, we try to send it again 16 times*/
+	uint8_t retrans_counter;
+
+	struct in_addr src; /* Neighbor Src address. */
+
+	uint8_t os_rel_major;  // system version - just for show
+	uint8_t os_rel_minor;  // system version - just for show
+	uint8_t tlv_rel_major; // eigrp version - tells us what TLV format to
+			       // use
+	uint8_t tlv_rel_minor; // eigrp version - tells us what TLV format to
+			       // use
+
+	uint8_t K1;
+	uint8_t K2;
+	uint8_t K3;
+	uint8_t K4;
+	uint8_t K5;
+	uint8_t K6;
+
+	/* Timer values. */
+	uint16_t v_holddown;
+
+	/* Threads. */
+	struct thread *t_holddown;
+	struct thread *t_nbr_send_gr; /* thread for sending multiple GR packet
+					 chunks */
+
+	struct eigrp_fifo *retrans_queue;
+	struct eigrp_fifo *multicast_queue;
+
+	uint32_t crypt_seqnum; /* Cryptographic Sequence Number. */
+
+	/* prefixes not received from neighbor during Graceful restart */
+	struct list *nbr_gr_prefixes;
+	/* prefixes not yet send to neighbor during Graceful restart */
+	struct list *nbr_gr_prefixes_send;
+	/* if packet is first or last during Graceful restart */
+	enum Packet_part_type nbr_gr_packet_type;
+};
+
 //---------------------------------------------------------------------------------------------------------------------------------------------
 
-typedef struct eigrp_packet {
-	eigrp_packet_t *next;
-	eigrp_packet_t *previous;
+
+struct eigrp_packet {
+	struct eigrp_packet *next;
+	struct eigrp_packet *previous;
 
 	/* Pointer to data stream. */
 	struct stream *s;
@@ -275,7 +297,14 @@ typedef struct eigrp_packet {
 	uint16_t length;
 
 	struct eigrp_neighbor *nbr;
-} eigrp_packet_t;
+};
+
+struct eigrp_fifo {
+	struct eigrp_packet *head;
+	struct eigrp_packet *tail;
+
+	unsigned long count;
+};
 
 struct eigrp_header {
 	uint8_t version;
@@ -411,50 +440,51 @@ enum GR_type { EIGRP_GR_MANUAL, EIGRP_GR_FILTER };
 //---------------------------------------------------------------------------------------------------------------------------------------------
 
 /* EIGRP Topology table node structure */
-typedef struct eigrp_prefix_descriptor {
-    struct list *entries, *rij;
-    struct prefix *destination;
+struct eigrp_prefix_descriptor {
+	struct list *entries, *rij;
+	uint32_t fdistance;		      // FD
+	uint32_t rdistance;		      // RD
+	uint32_t distance;		      // D
+	struct eigrp_metrics reported_metric; // RD for sending
 
-    eigrp_metrics_t reported_metric; // RD for sending
-    uint32_t fdistance;		      // FD
-    uint32_t rdistance;		      // RD
-    uint32_t distance;		      // D
+	uint8_t nt;	 // network type
+	uint8_t state;      // route fsm state
+	uint8_t af;	 // address family
+	uint8_t req_action; // required action
 
-    uint8_t nt;	 // network type
-    uint8_t state;      // route FSM state
-    uint8_t af;	 // address family
-    uint8_t req_action; // required action
+	struct prefix *destination;
 
-    // If network type is REMOTE_EXTERNAL, pointer will have reference to
-    // its external TLV
-    struct TLV_IPv4_External_type *extTLV;
+	// If network type is REMOTE_EXTERNAL, pointer will have reference to
+	// its external TLV
+	struct TLV_IPv4_External_type *extTLV;
 
-    uint64_t serno; /*Serial number for this entry. Increased with each
-		      change of entry*/
-} eigrp_prefix_descriptor_t;
+	uint64_t serno; /*Serial number for this entry. Increased with each
+			   change of entry*/
+};
 
 /* EIGRP Topology table record structure */
-typedef struct eigrp_route_descriptor {
-    uint16_t	type;
-    uint16_t	afi;	// ipv4 or ipv6
+struct eigrp_route_descriptor {
+	uint16_t type;
+	uint16_t afi;
 
-    eigrp_prefix_descriptor_t *prefix;	// prefix this route is part of
-    eigrp_neighbor_t *adv_router;		// peer who sent me the route
-    eigrp_addr_t nexthop;			// ip address as advertised by peer
+	struct eigrp_prefix_descriptor *prefix;
+	struct eigrp_neighbor *adv_router;
+	struct in_addr nexthop;
 
-    uint32_t reported_distance;			// distance reported by neighbor
-    uint32_t distance;				// reported distance + link cost to neighbor
+	uint32_t reported_distance; // distance reported by neighbor
+	uint32_t distance;	  // sum of reported distance and link cost to
+				    // advertised neighbor
 
-    eigrp_metrics_t reported_metric;
-    eigrp_metrics_t total_metric;
+	struct eigrp_metrics reported_metric;
+	struct eigrp_metrics total_metric;
 
-    eigrp_metrics_t	metric;
-    eigrp_extdata_t	extdata;
+	struct eigrp_metrics metric;
+	struct eigrp_extdata extdata;
 
-    uint8_t flags;			   // used for marking successor and FS
+	uint8_t flags;			   // used for marking successor and FS
 
-    eigrp_interface_t *ei; // pointer for case of connected entry
-} eigrp_route_descriptor_t;
+	struct eigrp_interface *ei; // pointer for case of connected entry
+};
 
 //---------------------------------------------------------------------------------------------------------------------------------------------
 typedef enum {
@@ -465,15 +495,15 @@ typedef enum {
 
 /* EIGRP Finite State Machine */
 
-typedef struct eigrp_fsm_action_message {
-    uint8_t packet_type;		   // UPDATE, QUERY, SIAQUERY, SIAREPLY
-    eigrp_t *eigrp;		   // which thread sent mesg
-    eigrp_neighbor_t *adv_router; // advertising neighbor
-    eigrp_route_descriptor_t *route;
-    eigrp_prefix_descriptor_t *prefix;
-    msg_data_t data_type; // internal or external tlv type
-    eigrp_metrics_t metrics;
-    enum metric_change change;
-} eigrp_fsm_action_message_t;
+struct eigrp_fsm_action_message {
+	uint8_t packet_type;		   // UPDATE, QUERY, SIAQUERY, SIAREPLY
+	struct eigrp *eigrp;		   // which thread sent mesg
+	struct eigrp_neighbor *adv_router; // advertising neighbor
+	struct eigrp_route_descriptor *entry;
+	struct eigrp_prefix_descriptor *prefix;
+	msg_data_t data_type; // internal or external tlv type
+	struct eigrp_metrics metrics;
+	enum metric_change change;
+};
 
 #endif /* _ZEBRA_EIGRP_STRUCTURES_H_ */

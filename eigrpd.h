@@ -30,41 +30,19 @@
 
 #include <zebra.h>
 
-#include "thread.h"
-#include "memory.h"
-#include "linklist.h"
-#include "vty.h"
-#include "keychain.h"
-#include "prefix.h"
-#include "if.h"
-#include "table.h"
-#include "sockunion.h"
-#include "stream.h"
-#include "log.h"
-#include "sockopt.h"
-//#include "checksum.h"
-#include "md5.h"
-#include "sha256.h"
-#include "lib_errors.h"
 #include "filter.h"
 #include "log.h"
-
-// everyone needs these - include then here once and for all
-#include "eigrpd/eigrp_const.h"
-#include "eigrpd/eigrp_types.h"
-#include "eigrpd/eigrp_macros.h"
 
 /* Set EIGRP version is "classic" - wide metrics comes next */
 #define EIGRP_MAJOR_VERSION     1
 #define EIGRP_MINOR_VERSION	2
 
-#define EIGRP_TLV_32B_VERSION	1	// Original 32bit scaled metrics
-#define EIGRP_TLV_64B_VERSION	2	// Current 64bit 'wide' metrics
-#define EIGRP_TLV_MTR_VERSION	3	// MTR TLVs with 32bit metric *Not Supported
-#define EIGRP_TLV_SAF_VERSION	4	// SAF TLVs with 64bit metric *Not Supported
+#define EIGRP_TLV_32B_VERSION 1 /* Original 32bit scaled metrics */
+#define EIGRP_TLV_64B_VERSION 2 /* Current 64bit 'wide' metrics */
+#define EIGRP_TLV_MTR_VERSION 3 /* MTR TLVs with 32bit metric *Not Supported */
+#define EIGRP_TLV_SAF_VERSION 4 /* SAF TLVs with 64bit metric *Not Supported */
 
-/* EIGRP master for system wide configuration and variables. */
-typedef struct eigrp_master {
+struct eigrp_master {
 	/* EIGRP instance. */
 	struct list *eigrp;
 
@@ -81,7 +59,7 @@ typedef struct eigrp_master {
 	uint8_t options;
 
 #define EIGRP_MASTER_SHUTDOWN (1 << 0) /* deferred-shutdown */
-} eigrp_master_t;
+};
 
 /* Extern variables. */
 extern struct zclient *zclient;
@@ -92,16 +70,10 @@ extern struct zebra_privs_t eigrpd_privs;
 /* Prototypes */
 extern void eigrp_master_init(void);
 extern void eigrp_terminate(void);
-extern void eigrp_finish(eigrp_t *);
-extern void eigrp_finish_final(eigrp_t *);
-
-extern eigrp_t *eigrp_get(uint16_t as, vrf_id_t vrf_id);
-extern eigrp_t *eigrp_lookup(vrf_id_t vrf_id);
-
-extern void eigrp_router_id_update(eigrp_t *);
-
-// DVS: fix this
-#include "eigrp_cli.h"
-#include "eigrp_yang.h"
+extern void eigrp_finish_final(struct eigrp *eigrp);
+extern void eigrp_finish(struct eigrp *eigrp);
+extern struct eigrp *eigrp_get(uint16_t as, vrf_id_t vrf_id);
+extern struct eigrp *eigrp_lookup(vrf_id_t vrf_id);
+extern void eigrp_router_id_update(struct eigrp *eigrp);
 
 #endif /* _ZEBRA_EIGRPD_H */

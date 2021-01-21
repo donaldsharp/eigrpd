@@ -41,6 +41,7 @@
 #include "log.h"
 #include "nexthop.h"
 
+#include "eigrpd/eigrp_types.h"
 #include "eigrpd/eigrp_structs.h"
 #include "eigrpd/eigrpd.h"
 #include "eigrpd/eigrp_interface.h"
@@ -69,7 +70,7 @@ struct in_addr router_id_zebra;
 /* Router-id update message from zebra. */
 static int eigrp_router_id_update_zebra(ZAPI_CALLBACK_ARGS)
 {
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 	struct prefix router_id;
 	zebra_router_id_update_read(zclient->ibuf, &router_id);
 
@@ -89,7 +90,8 @@ static int eigrp_zebra_route_notify_owner(ZAPI_CALLBACK_ARGS)
 	enum zapi_route_notify_owner note;
 	uint32_t table;
 
-	if (!zapi_route_notify_decode(zclient->ibuf, &p, &table, &note))
+	if (!zapi_route_notify_decode(zclient->ibuf, &p, &table, &note, NULL,
+				      NULL))
 		return -1;
 
 	return 0;
@@ -121,7 +123,7 @@ void eigrp_zebra_init(void)
 static int eigrp_zebra_read_route(ZAPI_CALLBACK_ARGS)
 {
 	struct zapi_route api;
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	if (zapi_route_decode(zclient->ibuf, &api) < 0)
 		return -1;
@@ -151,12 +153,9 @@ static int eigrp_interface_address_add(ZAPI_CALLBACK_ARGS)
 	if (c == NULL)
 		return 0;
 
-	if (IS_DEBUG_EIGRP(zebra, ZEBRA_INTERFACE)) {
-		char buf[128];
-		prefix2str(c->address, buf, sizeof(buf));
-		zlog_debug("Zebra: interface %s address add %s", c->ifp->name,
-			   buf);
-	}
+	if (IS_DEBUG_EIGRP(zebra, ZEBRA_INTERFACE))
+		zlog_debug("Zebra: interface %s address add %pFX", c->ifp->name,
+			   c->address);
 
 	eigrp_if_update(c->ifp);
 
@@ -167,19 +166,16 @@ static int eigrp_interface_address_delete(ZAPI_CALLBACK_ARGS)
 {
 	struct connected *c;
 	struct interface *ifp;
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 
 	c = zebra_interface_address_read(cmd, zclient->ibuf, vrf_id);
 
 	if (c == NULL)
 		return 0;
 
-	if (IS_DEBUG_EIGRP(zebra, ZEBRA_INTERFACE)) {
-		char buf[128];
-		prefix2str(c->address, buf, sizeof(buf));
-		zlog_debug("Zebra: interface %s address delete %s",
-			   c->ifp->name, buf);
-	}
+	if (IS_DEBUG_EIGRP(zebra, ZEBRA_INTERFACE))
+		zlog_debug("Zebra: interface %s address delete %pFX",
+			   c->ifp->name, c->address);
 
 	ifp = c->ifp;
 	ei = ifp->info;
@@ -195,12 +191,12 @@ static int eigrp_interface_address_delete(ZAPI_CALLBACK_ARGS)
 	return 0;
 }
 
-void eigrp_zebra_route_add(eigrp_t *eigrp, struct prefix *p,
+void eigrp_zebra_route_add(struct eigrp *eigrp, struct prefix *p,
 			   struct list *successors, uint32_t distance)
 {
 	struct zapi_route api;
 	struct zapi_nexthop *api_nh;
-	eigrp_route_descriptor_t *te;
+	struct eigrp_route_descriptor *te;
 	struct listnode *node;
 	int count = 0;
 
@@ -235,16 +231,15 @@ void eigrp_zebra_route_add(eigrp_t *eigrp, struct prefix *p,
 	api.nexthop_num = count;
 
 	if (IS_DEBUG_EIGRP(zebra, ZEBRA_REDISTRIBUTE)) {
-		char buf[2][PREFIX_STRLEN];
-		zlog_debug("Zebra: Route add %s nexthop %s",
-			   prefix2str(p, buf[0], PREFIX_STRLEN),
-			   inet_ntop(AF_INET, 0, buf[1], PREFIX_STRLEN));
+		char buf[PREFIX_STRLEN];
+		zlog_debug("Zebra: Route add %pFX nexthop %s", p,
+			   inet_ntop(AF_INET, 0, buf, PREFIX_STRLEN));
 	}
 
 	zclient_route_send(ZEBRA_ROUTE_ADD, zclient, &api);
 }
 
-void eigrp_zebra_route_delete(eigrp_t *eigrp, struct prefix *p)
+void eigrp_zebra_route_delete(struct eigrp *eigrp, struct prefix *p)
 {
 	struct zapi_route api;
 
@@ -258,11 +253,8 @@ void eigrp_zebra_route_delete(eigrp_t *eigrp, struct prefix *p)
 	memcpy(&api.prefix, p, sizeof(*p));
 	zclient_route_send(ZEBRA_ROUTE_DELETE, zclient, &api);
 
-	if (IS_DEBUG_EIGRP(zebra, ZEBRA_REDISTRIBUTE)) {
-		char buf[PREFIX_STRLEN];
-		zlog_debug("Zebra: Route del %s",
-			   prefix2str(p, buf, PREFIX_STRLEN));
-	}
+	if (IS_DEBUG_EIGRP(zebra, ZEBRA_REDISTRIBUTE))
+		zlog_debug("Zebra: Route del %pFX", p);
 
 	return;
 }
@@ -276,7 +268,7 @@ static int eigrp_is_type_redistributed(int type, vrf_id_t vrf_id)
 					   vrf_id));
 }
 
-int eigrp_redistribute_set(eigrp_t *eigrp, int type,
+int eigrp_redistribute_set(struct eigrp *eigrp, int type,
 			   struct eigrp_metrics metric)
 {
 
@@ -306,7 +298,7 @@ int eigrp_redistribute_set(eigrp_t *eigrp, int type,
 	return CMD_SUCCESS;
 }
 
-int eigrp_redistribute_unset(eigrp_t *eigrp, int type)
+int eigrp_redistribute_unset(struct eigrp *eigrp, int type)
 {
 
 	if (eigrp_is_type_redistributed(type, eigrp->vrf_id)) {

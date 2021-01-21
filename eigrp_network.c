@@ -47,11 +47,10 @@
 #include "eigrpd/eigrp_zebra.h"
 #include "eigrpd/eigrp_vty.h"
 #include "eigrpd/eigrp_network.h"
-#include "eigrpd/eigrp_metric.h"
 
 static int eigrp_network_match_iface(const struct prefix *connected_prefix,
 				     const struct prefix *prefix);
-static void eigrp_network_run_interface(eigrp_t *, struct prefix *,
+static void eigrp_network_run_interface(struct eigrp *, struct prefix *,
 					struct interface *);
 
 int eigrp_sock_init(struct vrf *vrf)
@@ -108,7 +107,7 @@ int eigrp_sock_init(struct vrf *vrf)
 	return eigrp_sock;
 }
 
-void eigrp_adjust_sndbuflen(eigrp_t *eigrp, unsigned int buflen)
+void eigrp_adjust_sndbuflen(struct eigrp *eigrp, unsigned int buflen)
 {
 	int newbuflen;
 	/* Check if any work has to be done at all. */
@@ -133,7 +132,7 @@ void eigrp_adjust_sndbuflen(eigrp_t *eigrp, unsigned int buflen)
 		zlog_warn("%s: failed to get SO_SNDBUF", __func__);
 }
 
-int eigrp_if_ipmulticast(eigrp_t *top, struct prefix *p,
+int eigrp_if_ipmulticast(struct eigrp *top, struct prefix *p,
 			 unsigned int ifindex)
 {
 	uint8_t val;
@@ -161,16 +160,14 @@ int eigrp_if_ipmulticast(eigrp_t *top, struct prefix *p,
 	ret = setsockopt_ipv4_multicast_if(top->fd, p->u.prefix4, ifindex);
 	if (ret < 0)
 		zlog_warn(
-			"can't setsockopt IP_MULTICAST_IF (fd %d, addr %s, "
-			"ifindex %u): %s",
-			top->fd, inet_ntoa(p->u.prefix4), ifindex,
-			safe_strerror(errno));
+			"can't setsockopt IP_MULTICAST_IF (fd %d, addr %pI4, ifindex %u): %s",
+			top->fd, &p->u.prefix4, ifindex, safe_strerror(errno));
 
 	return ret;
 }
 
 /* Join to the EIGRP multicast group. */
-int eigrp_if_add_allspfrouters(eigrp_t *top, struct prefix *p,
+int eigrp_if_add_allspfrouters(struct eigrp *top, struct prefix *p,
 			       unsigned int ifindex)
 {
 	int ret;
@@ -180,19 +177,16 @@ int eigrp_if_add_allspfrouters(eigrp_t *top, struct prefix *p,
 		htonl(EIGRP_MULTICAST_ADDRESS), ifindex);
 	if (ret < 0)
 		zlog_warn(
-			"can't setsockopt IP_ADD_MEMBERSHIP (fd %d, addr %s, "
-			"ifindex %u, AllSPFRouters): %s; perhaps a kernel limit "
-			"on # of multicast group memberships has been exceeded?",
-			top->fd, inet_ntoa(p->u.prefix4), ifindex,
-			safe_strerror(errno));
+			"can't setsockopt IP_ADD_MEMBERSHIP (fd %d, addr %pI4, ifindex %u, AllSPFRouters): %s; perhaps a kernel limit on # of multicast group memberships has been exceeded?",
+			top->fd, &p->u.prefix4, ifindex, safe_strerror(errno));
 	else
-		zlog_debug("interface %s [%u] join EIGRP Multicast group.",
-			   inet_ntoa(p->u.prefix4), ifindex);
+		zlog_debug("interface %pI4 [%u] join EIGRP Multicast group.",
+			   &p->u.prefix4, ifindex);
 
 	return ret;
 }
 
-int eigrp_if_drop_allspfrouters(eigrp_t *top, struct prefix *p,
+int eigrp_if_drop_allspfrouters(struct eigrp *top, struct prefix *p,
 				unsigned int ifindex)
 {
 	int ret;
@@ -202,24 +196,22 @@ int eigrp_if_drop_allspfrouters(eigrp_t *top, struct prefix *p,
 		htonl(EIGRP_MULTICAST_ADDRESS), ifindex);
 	if (ret < 0)
 		zlog_warn(
-			"can't setsockopt IP_DROP_MEMBERSHIP (fd %d, addr %s, "
-			"ifindex %u, AllSPFRouters): %s",
-			top->fd, inet_ntoa(p->u.prefix4), ifindex,
-			safe_strerror(errno));
+			"can't setsockopt IP_DROP_MEMBERSHIP (fd %d, addr %pI4, ifindex %u, AllSPFRouters): %s",
+			top->fd, &p->u.prefix4, ifindex, safe_strerror(errno));
 	else
-		zlog_debug("interface %s [%u] leave EIGRP Multicast group.",
-			   inet_ntoa(p->u.prefix4), ifindex);
+		zlog_debug("interface %pI4 [%u] leave EIGRP Multicast group.",
+			   &p->u.prefix4, ifindex);
 
 	return ret;
 }
 
-int eigrp_network_set(eigrp_t *eigrp, struct prefix *p)
+int eigrp_network_set(struct eigrp *eigrp, struct prefix *p)
 {
 	struct vrf *vrf = vrf_lookup_by_id(eigrp->vrf_id);
 	struct route_node *rn;
 	struct interface *ifp;
 
-	rn = route_node_get(eigrp->networks, (struct prefix *)p);
+	rn = route_node_get(eigrp->networks, p);
 	if (rn->info) {
 		/* There is already same network statement. */
 		route_unlock_node(rn);
@@ -252,10 +244,10 @@ static int eigrp_network_match_iface(const struct prefix *co_prefix,
 	return prefix_match_network_statement(net, co_prefix);
 }
 
-static void eigrp_network_run_interface(eigrp_t *eigrp, struct prefix *p,
+static void eigrp_network_run_interface(struct eigrp *eigrp, struct prefix *p,
 					struct interface *ifp)
 {
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 	struct listnode *cnode;
 	struct connected *co;
 
@@ -289,7 +281,7 @@ void eigrp_if_update(struct interface *ifp)
 {
 	struct listnode *node, *nnode;
 	struct route_node *rn;
-	eigrp_t *eigrp;
+	struct eigrp *eigrp;
 
 	/*
 	 * In the event there are multiple eigrp autonymnous systems running,
@@ -300,7 +292,7 @@ void eigrp_if_update(struct interface *ifp)
 			continue;
 
 		/* EIGRP must be on and Router-ID must be configured. */
-		if (eigrp->router_id.s_addr == 0)
+		if (eigrp->router_id.s_addr == INADDR_ANY)
 			continue;
 
 		/* Run each network for this interface. */
@@ -311,11 +303,11 @@ void eigrp_if_update(struct interface *ifp)
 	}
 }
 
-int eigrp_network_unset(eigrp_t *eigrp, struct prefix *p)
+int eigrp_network_unset(struct eigrp *eigrp, struct prefix *p)
 {
 	struct route_node *rn;
 	struct listnode *node, *nnode;
-	eigrp_interface_t *ei;
+	struct eigrp_interface *ei;
 	struct prefix *pref;
 
 	rn = route_node_lookup(eigrp->networks, p);
@@ -354,6 +346,6 @@ int eigrp_network_unset(eigrp_t *eigrp, struct prefix *p)
 	return 1;
 }
 
-void eigrp_external_routes_refresh(eigrp_t *eigrp, int type)
+void eigrp_external_routes_refresh(struct eigrp *eigrp, int type)
 {
 }
